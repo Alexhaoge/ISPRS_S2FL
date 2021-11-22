@@ -3,32 +3,41 @@ clear;
 close all;
 
 addpath('functions'); 
+addpath('utils');
+addpath('Datasets/HS-MS Houston2013');
 
-%input data
+% Hyper parameter
+q = 45; 
+sigma = 1;
+alpha = 0.01;
+beta = 1;
+d = 30;
+
+% input data
 load data_HS_LR.mat;
 load data_MS_HR.mat;
 TrainImage = double(imread('2013_IEEE_GRSS_DF_Contest_Samples_TR.tif'));
 TestImage = double(imread('2013_IEEE_GRSS_DF_Contest_Samples_VA.tif'));
-
+% get shape
 [m, n, z] = size(data_HS_LR);
-
+% reshape 3D images to 2D matrix with size of (d_k, sum(dk))
 HSI2d = hyperConvert2d(data_HS_LR);
 MSI2d = hyperConvert2d(data_MS_HR);
-
+% reshape 2D label mask to 1D vector
 TR2d = hyperConvert2d(TrainImage);
 TE2d = hyperConvert2d(TestImage);
-
+% remove data not involve in training
 TrainLabel = TR2d(:, TR2d > 0);
 TestLabel = TE2d(:, TE2d > 0);
 
-% normalization
+% normalization all pixels into floats between 0 and 1.
 for i = 1 : size(HSI2d, 1)
     HSI2d(i, :) = mat2gray(HSI2d(i, :));
 end
 for i = 1 : size(MSI2d, 1)
     MSI2d(i, :) = mat2gray(MSI2d(i, :));
 end
-
+% remove unused pixel by the mask
 traindata_SP_hsi = HSI2d(:, TR2d > 0);
 testdata_SP_hsi = HSI2d(:, TE2d > 0);
 
@@ -41,8 +50,10 @@ SP_2 = [zeros(size(traindata_SP_hsi)); traindata_SP_msi];
 SP_3 = [testdata_SP_hsi; zeros(size(testdata_SP_msi))];
 SP_4 = [zeros(size(testdata_SP_hsi)); testdata_SP_msi];
 
-W_SP1 = creatLap(traindata_SP_hsi, 45, 1); % CoSpace-l2: 10, CoSpace-l1: 10
-W_SP2 = creatLap(traindata_SP_msi, 45, 1); % CoSpace-l2: 10, CoSpace-l1: 10 
+% Create Laplacian matrix for intramodality subgraph
+% (construct W is well designed for supervised and KNN)
+W_SP1 = creatLap(traindata_SP_hsi, q, sigma); % CoSpace-l2: 10, CoSpace-l1: 10
+W_SP2 = creatLap(traindata_SP_msi, q, sigma); % CoSpace-l2: 10, CoSpace-l1: 10 
 
     %generate graph matrix(W) and Laplacian matrix(L)
     dis = pdist([TrainLabel,TrainLabel]');
@@ -56,11 +67,11 @@ W_SP2 = creatLap(traindata_SP_msi, 45, 1); % CoSpace-l2: 10, CoSpace-l1: 10
     L = diag(sum(W)) - W;
     
     %SMA initialization
-    LP = DR_LPP([SP_1, SP_2], 10, 30, 1, W);
+    LP = DR_LPP([SP_1, SP_2], 10, d, sigma, W);
     Y = OneHotEncoding(TrainLabel, max(TrainLabel));
     
     % S2FL model
-    [theta00, theta12, P, res] = S2FL([Y, Y], [SP_1, SP_2], LP' * [SP_1, SP_2],0.01, 0.1, L, 1000);
+    [theta00, theta12, P, res] = S2FL([Y, Y], [SP_1, SP_2], LP' * [SP_1, SP_2],alpha, beta, L, 1000);
     f_hsi = (theta00 + theta12) * [SP_1, SP_2];
     f_msi = (theta00 + theta12) * [SP_3, SP_4];
     
